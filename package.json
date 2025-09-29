@@ -1,6 +1,6 @@
 {
   "name": "local-request-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "MCP server for making HTTP requests to local network addresses",
   "main": "./dist/index.js",
