@@ -14,6 +14,7 @@ async function main() {
         await server.connect(transport);
         // 服务器已启动
         console.error('Local Request MCP Server started successfully');
+        console.error('Server version: 1.0.0 | Author: await29');
     }
     catch (error) {
         console.error('Failed to start server:', error);
