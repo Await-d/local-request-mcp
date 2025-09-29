@@ -25,6 +25,7 @@ export interface RequestResponse {
   url: string;
   method: string;
   duration: number;
+  timestamp: string;
 }
 
 /**
@@ -45,7 +46,8 @@ export async function executeLocalRequest(params: RequestParams): Promise<Reques
         error: urlValidation.error,
         url: validatedParams.url,
         method: validatedParams.method,
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
       };
     }
 
@@ -87,7 +89,8 @@ export async function executeLocalRequest(params: RequestParams): Promise<Reques
       data: responseData,
       url: validatedParams.url,
       method: validatedParams.method,
-      duration
+      duration,
+      timestamp: new Date().toISOString()
     };
 
   } catch (error) {
@@ -125,7 +128,8 @@ export async function executeLocalRequest(params: RequestParams): Promise<Reques
       statusText,
       url: params.url,
       method: params.method || 'GET',
-      duration
+      duration,
+      timestamp: new Date().toISOString()
     };
   }
 }

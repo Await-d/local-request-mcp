@@ -32,6 +32,7 @@ export interface RequestResponse {
     url: string;
     method: string;
     duration: number;
+    timestamp: string;
 }
 /**
  * 执行本地网络请求

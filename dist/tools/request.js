@@ -26,7 +26,8 @@ export async function executeLocalRequest(params) {
                 error: urlValidation.error,
                 url: validatedParams.url,
                 method: validatedParams.method,
-                duration: Date.now() - startTime
+                duration: Date.now() - startTime,
+                timestamp: new Date().toISOString()
             };
         }
         // 准备请求配置
@@ -64,7 +65,8 @@ export async function executeLocalRequest(params) {
             data: responseData,
             url: validatedParams.url,
             method: validatedParams.method,
-            duration
+            duration,
+            timestamp: new Date().toISOString()
         };
     }
     catch (error) {
@@ -103,7 +105,8 @@ export async function executeLocalRequest(params) {
             statusText,
             url: params.url,
             method: params.method || 'GET',
-            duration
+            duration,
+            timestamp: new Date().toISOString()
         };
     }
 }
