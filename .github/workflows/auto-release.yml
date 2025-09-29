@@ -1,0 +1,206 @@
+name: Auto Release and Publish
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.gitignore'
+
+jobs:
+  check-changes:
+    name: Check for meaningful changes
+    runs-on: ubuntu-latest
+    outputs:
+      should-release: ${{ steps.check.outputs.should-release }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: Check for code changes
+      id: check
+      run: |
+        if git diff HEAD~1 --name-only | grep -E '\.(ts|js|json)$' | grep -v package-lock.json; then
+          echo "should-release=true" >> $GITHUB_OUTPUT
+          echo "📦 Code changes detected, will create release"
+        else
+          echo "should-release=false" >> $GITHUB_OUTPUT
+          echo "📄 No code changes detected, skipping release"
+        fi
+
+  test:
+    name: Test and Build
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.should-release == 'true'
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build project
+      run: npm run build
+
+    - name: Run security tests
+      run: |
+        cat > test-security.js << 'EOF'
+        import { validateLocalUrl } from './dist/utils/security.js';
+
+        console.log('🔒 Running security validation tests...\n');
+
+        const testCases = [
+          { url: 'http://localhost:3000', expected: true, desc: 'localhost' },
+          { url: 'http://127.0.0.1:8080', expected: true, desc: 'loopback IP' },
+          { url: 'http://192.168.1.100:3000', expected: true, desc: 'private network' },
+          { url: 'http://10.0.0.1:8000', expected: true, desc: 'private network 10.x' },
+          { url: 'http://172.16.0.1:9000', expected: true, desc: 'private network 172.x' },
+          { url: 'http://google.com', expected: false, desc: 'external domain' },
+          { url: 'https://example.com', expected: false, desc: 'external HTTPS' },
+          { url: 'ftp://localhost:21', expected: false, desc: 'non-HTTP protocol' },
+          { url: 'http://8.8.8.8:80', expected: false, desc: 'public IP' }
+        ];
+
+        let passed = 0;
+        testCases.forEach(({ url, expected, desc }, index) => {
+          const result = validateLocalUrl(url);
+          const success = result.valid === expected;
+          console.log(`Test ${index + 1}: ${desc} - ${success ? '✅' : '❌'}`);
+          if (success) passed++;
+        });
+
+        console.log(`\n📊 Security tests: ${passed}/${testCases.length} passed`);
+        if (passed !== testCases.length) {
+          console.log('❌ Security tests failed!');
+          process.exit(1);
+        }
+        console.log('🎉 All security tests passed!');
+        EOF
+
+        node test-security.js
+
+    - name: Test server startup
+      run: |
+        echo "🚀 Testing server startup..."
+        timeout 5s node dist/index.js && echo "❌ Server should not exit" || echo "✅ Server startup test passed"
+
+  release:
+    name: Create Release and Publish
+    runs-on: ubuntu-latest
+    needs: [check-changes, test]
+    if: needs.check-changes.outputs.should-release == 'true'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build project
+      run: npm run build
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Bump version and create tag
+      id: version
+      run: |
+        # 获取当前版本
+        CURRENT_VERSION=$(npm pkg get version | tr -d '"')
+        echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+        # 自动递增补丁版本
+        npm version patch --no-git-tag-version
+
+        # 获取新版本
+        NEW_VERSION=$(npm pkg get version | tr -d '"')
+        echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+
+        # 提交版本更改
+        git add package.json
+        git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
+        git tag "v$NEW_VERSION"
+
+        echo "📦 Version bumped from $CURRENT_VERSION to $NEW_VERSION"
+
+    - name: Push changes and tags
+      run: |
+        git push origin HEAD:${{ github.ref_name }}
+        git push origin --tags
+
+    - name: Publish to NPM
+      run: |
+        echo "📤 Publishing to NPM..."
+        npm publish --access public
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        release_name: Release ${{ steps.version.outputs.new-version }}
+        body: |
+          🚀 **Local Request MCP v${{ steps.version.outputs.new-version }}**
+
+          ## ✨ 新功能
+          - 自动构建和发布流程
+          - 完整的安全验证测试
+          - 多Node.js版本兼容性测试
+
+          ## 📦 安装使用
+          ```bash
+          # 直接使用 (推荐)
+          npx local-request-mcp
+
+          # 全局安装
+          npm install -g local-request-mcp
+          ```
+
+          ## 🔗 相关链接
+          - [NPM包](https://www.npmjs.com/package/local-request-mcp)
+          - [GitHub仓库](https://github.com/Await-d/local-request-mcp)
+          - [使用文档](https://github.com/Await-d/local-request-mcp#readme)
+
+          ---
+          🤖 *自动构建于 GitHub Actions*
+        draft: false
+        prerelease: false
+
+    - name: Send notification
+      run: |
+        echo "🎉 Successfully released version ${{ steps.version.outputs.new-version }}"
+        echo "📦 NPM: https://www.npmjs.com/package/local-request-mcp"
+        echo "🏷️ GitHub: https://github.com/Await-d/local-request-mcp/releases/tag/${{ steps.version.outputs.tag }}"

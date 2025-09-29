@@ -1,0 +1,130 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      release_notes:
+        description: 'Release notes (optional)'
+        required: false
+        type: string
+
+jobs:
+  manual-release:
+    name: Manual Release and Publish
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build project
+      run: npm run build
+
+    - name: Run tests
+      run: |
+        cat > test-security.js << 'EOF'
+        import { validateLocalUrl } from './dist/utils/security.js';
+
+        const testCases = [
+          { url: 'http://localhost:3000', expected: true },
+          { url: 'http://127.0.0.1:8080', expected: true },
+          { url: 'http://192.168.1.100:3000', expected: true },
+          { url: 'http://google.com', expected: false },
+          { url: 'https://example.com', expected: false },
+          { url: 'ftp://localhost:21', expected: false }
+        ];
+
+        let passed = 0;
+        testCases.forEach(({ url, expected }) => {
+          const result = validateLocalUrl(url);
+          if (result.valid === expected) passed++;
+        });
+
+        console.log(`Security tests: ${passed}/${testCases.length} passed`);
+        if (passed !== testCases.length) process.exit(1);
+        console.log('✅ All tests passed!');
+        EOF
+
+        node test-security.js
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Bump version and create tag
+      id: version
+      run: |
+        CURRENT_VERSION=$(npm pkg get version | tr -d '"')
+        echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+        npm version ${{ inputs.version_type }} --no-git-tag-version
+
+        NEW_VERSION=$(npm pkg get version | tr -d '"')
+        echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+
+        git add package.json
+        git commit -m "chore: bump version to $NEW_VERSION [manual release]"
+        git tag "v$NEW_VERSION"
+
+        echo "📦 Manual version bump: $CURRENT_VERSION → $NEW_VERSION (${{ inputs.version_type }})"
+
+    - name: Push changes and tags
+      run: |
+        git push origin HEAD:${{ github.ref_name }}
+        git push origin --tags
+
+    - name: Publish to NPM
+      run: npm publish --access public
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        release_name: Release ${{ steps.version.outputs.new-version }}
+        body: |
+          🚀 **Local Request MCP v${{ steps.version.outputs.new-version }}** (Manual Release)
+
+          ${{ inputs.release_notes && '## 📝 Release Notes' || '' }}
+          ${{ inputs.release_notes }}
+
+          ## 📦 安装使用
+          ```bash
+          npx local-request-mcp
+          ```
+
+          ## 🔗 链接
+          - [NPM](https://www.npmjs.com/package/local-request-mcp)
+          - [GitHub](https://github.com/Await-d/local-request-mcp)
+
+          ---
+          🤖 *手动发布于 GitHub Actions*
+        draft: false
+        prerelease: false
